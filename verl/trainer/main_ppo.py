@@ -46,7 +46,7 @@ def main(config):
 
 
 # Define a function to run the PPO-like training process
-def run_ppo(config, task_runner_class=None) -> None:
+def run_ppo(config, task_runner_class=None) -> None: ########################初始化ray，加载配置项
     """Initialize Ray cluster and run distributed PPO training process.
 
     Args:
@@ -105,7 +105,18 @@ def run_ppo(config, task_runner_class=None) -> None:
         ray.timeline(filename=timeline_json_file)
 
 
-class TaskRunner:
+
+
+
+
+
+
+
+
+
+
+
+class TaskRunner:  ##############################################加载训练需要的worker
     """Ray remote class for executing distributed PPO training tasks.
 
     This class encapsulates the main training logic and runs as a Ray remote actor
@@ -258,7 +269,11 @@ class TaskRunner:
             self.role_worker_mapping[Role.RefPolicy] = ray.remote(ref_policy_cls)
             self.mapping[Role.RefPolicy] = "global_pool"
 
-    def run(self, config):
+
+
+
+
+    def run(self, config): #################################通过worker加载trainer并开始训练
         """Execute the main PPO training workflow.
 
         This method sets up the distributed training environment, initializes
