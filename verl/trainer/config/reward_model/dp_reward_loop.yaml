@@ -4,7 +4,7 @@ defaults:
 
 use_reward_loop: True
 reward_manager: naive
-enable: False
+enable: False # 是否使用reward model
 
 # Whether to deploy the model to a separate resource pool.
 enable_resource_pool: False

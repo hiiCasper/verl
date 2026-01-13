@@ -222,8 +222,8 @@ class TaskRunner:
         """Add reward model worker if enabled."""
         from verl.trainer.ppo.ray_trainer import Role
 
-        if config.reward_model.enable:
-            use_legacy_worker_impl = config.trainer.get("use_legacy_worker_impl", "auto")
+        if config.reward_model.enable: # 配置项使用reward model 而非 rule
+            use_legacy_worker_impl = config.trainer.get("use_legacy_worker_impl", "auto") # 是否使用旧版worker
             if use_legacy_worker_impl in ["auto", "enable", "disable"]:
                 if config.reward_model.strategy in {"fsdp", "fsdp2"}:
                     from verl.workers.fsdp_workers import RewardModelWorker
@@ -315,7 +315,7 @@ class TaskRunner:
         processor = hf_processor(local_path, trust_remote_code=trust_remote_code, use_fast=True)
 
         # Load the reward manager for training and validation.
-        reward_fn = load_reward_manager(
+        reward_fn = load_reward_manager( # 如果要自定义奖励规则，在配置项中声明规则路径和函数名
             config, tokenizer, num_examine=0, **config.reward_model.get("reward_kwargs", {})
         )
         val_reward_fn = load_reward_manager(

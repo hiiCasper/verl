@@ -114,7 +114,7 @@ def load_reward_manager(
 
     # Try to get a custom reward function based on the configuration
     # user defined reward manager can be registered in custom_reward_fn
-    compute_score = get_custom_reward_fn(config)
+    compute_score = get_custom_reward_fn(config) # 返回一个自定义的奖励规则。如果配置中没有自定义的奖励规则，将跳到下面的else
     final_compute_score = compute_score
 
     reward_manager_cfg: RewardManagerConfig = config.reward_manager
@@ -150,7 +150,7 @@ def load_reward_manager(
                 concurrent_semaphore=_concurrent_semaphore,
                 memory_limit_mb=memory_limit_mb,
             )
-        else:
+        else: # 没有自定义的奖励规则，使用默认奖励规则
             final_compute_score = default_compute_score
 
     # Instantiate and return the reward manager with the specified parameters
