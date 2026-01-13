@@ -46,7 +46,7 @@ def main(config):
 
 
 # Define a function to run the PPO-like training process
-def run_ppo(config, task_runner_class=None) -> None: ########################初始化ray，加载配置项
+def run_ppo(config, task_runner_class=None) -> None: # 通过ray运行TaskRunner并完成训练
     """Initialize Ray cluster and run distributed PPO training process.
 
     Args:
@@ -61,48 +61,49 @@ def run_ppo(config, task_runner_class=None) -> None: ########################初
         # Set environment variables in the runtime environment to control tokenizer parallelism,
         # NCCL debug level, VLLM logging level, and allow runtime LoRA updating
         # `num_cpus` specifies the number of CPU cores Ray can use, obtained from the configuration
-        default_runtime_env = get_ppo_ray_runtime_env()
+        default_runtime_env = get_ppo_ray_runtime_env() # 略
         ray_init_kwargs = config.ray_kwargs.get("ray_init", {})
-        runtime_env_kwargs = ray_init_kwargs.get("runtime_env", {})
+        runtime_env_kwargs = ray_init_kwargs.get("runtime_env", {}) # 读取和ray有关的配置
 
-        if config.transfer_queue.enable:
+        if config.transfer_queue.enable: # 获取和传输队列相关的配置项
             # Add runtime environment variables for transfer queue
             runtime_env_vars = runtime_env_kwargs.get("env_vars", {})
             runtime_env_vars["TRANSFER_QUEUE_ENABLE"] = "1"
             runtime_env_kwargs["env_vars"] = runtime_env_vars
 
-        runtime_env = OmegaConf.merge(default_runtime_env, runtime_env_kwargs)
+        runtime_env = OmegaConf.merge(default_runtime_env, runtime_env_kwargs) # OmegaConf用来管理配置项
         ray_init_kwargs = OmegaConf.create({**ray_init_kwargs, "runtime_env": runtime_env})
         print(f"ray init kwargs: {ray_init_kwargs}")
-        ray.init(**OmegaConf.to_container(ray_init_kwargs))
+        ray.init(**OmegaConf.to_container(ray_init_kwargs)) # 结合以上所有配置项，初始化ray
 
-    if task_runner_class is None:
-        task_runner_class = ray.remote(num_cpus=1)(TaskRunner)  # please make sure main_task is not scheduled on head
+    if task_runner_class is None: # please make sure main_task is not scheduled on head
+        task_runner_class = ray.remote(num_cpus=1)(TaskRunner)  # ray.remote()将类或者函数转换成可以异步执行的远程类、远程函数
 
     # Create a remote instance of the TaskRunner class, and
     # Execute the `run` method of the TaskRunner instance remotely and wait for it to complete
-    if (
+    if ( # 启动nsys监控
         is_cuda_available
-        and config.global_profiler.tool == "nsys"
-        and config.global_profiler.get("steps") is not None
-        and len(config.global_profiler.get("steps", [])) > 0
+        and config.global_profiler.tool == "nsys" # nsys，NVIDIA Nsight Systems，能够监控CPU，GPU上的任务执行情况
+        and config.global_profiler.get("steps") is not None # steps，只在某几步运行nsys，防止拖慢运行
+        and len(config.global_profiler.get("steps", [])) > 0 # steps长度不为0
     ):
-        from verl.utils.import_utils import is_nvtx_available
+        from verl.utils.import_utils import is_nvtx_available # 略，nvtx是代码标注器，用于nsys理解不同的任务。
 
         assert is_nvtx_available(), "nvtx is not available in CUDA platform. Please 'pip3 install nvtx'"
         nsight_options = OmegaConf.to_container(
-            config.global_profiler.global_tool_config.nsys.controller_nsight_options
+            config.global_profiler.global_tool_config.nsys.controller_nsight_options # 加载nsys配置
         )
-        runner = task_runner_class.options(runtime_env={"nsight": nsight_options}).remote()
-    else:
+        runner = task_runner_class.options(runtime_env={"nsight": nsight_options}).remote() # options()加载nsys配置；.remote()返回的是远程类的进程实例
+    else: # 不启动nsys
         runner = task_runner_class.remote()
-    ray.get(runner.run.remote(config))
+
+    ray.get(runner.run.remote(config)) # run()启动TaskRunner异步进程（一系列worker），get()阻塞并等待所有的进程结束
 
     # [Optional] get the path of the timeline trace file from the configuration, default to None
     # This file is used for performance analysis
     timeline_json_file = config.ray_kwargs.get("timeline_json_file", None)
-    if timeline_json_file:
-        ray.timeline(filename=timeline_json_file)
+    if timeline_json_file: # 如果用户配置了该项
+        ray.timeline(filename=timeline_json_file) # 收集所有进程的执行数据，导出为一个json文件，通过chrome://tracing查看结果
 
 
 
@@ -115,7 +116,7 @@ def run_ppo(config, task_runner_class=None) -> None: ########################初
 
 
 
-class TaskRunner:  ##############################################加载训练需要的worker
+class TaskRunner: # 分布式训练管理器，完成PPO的强化学习过程
     """Ray remote class for executing distributed PPO training tasks.
 
     This class encapsulates the main training logic and runs as a Ray remote actor
@@ -127,8 +128,14 @@ class TaskRunner:  ##############################################加载训练需
     """
 
     def __init__(self):
-        self.role_worker_mapping = {}
-        self.mapping = {}
+        # 常见的 Role 角色定义及其职责：
+        # - ActorRollout: 策略网络，负责在环境中进行采样（Rollout）。
+        # - Critic: 价值网络，负责估计状态价值（Value Estimation），用于计算 PPO 的优势函数（Advantage）。
+        # - RefPolicy: 参考策略，用于计算 KL 散度，防止模型在强化学习过程中产生严重的模式坍塌。
+        # - RewardModel: 奖励模型，在非规则奖励场景下，负责为 Actor 生成的响应进行打分。
+        # - ActorRolloutRef: 融合角色，在高性能模式下将 Actor、Rollout 和 RefPolicy 放在同一个进程中，以减少显存冗余和通信开销。
+        self.role_worker_mapping = {} # 角色 Role 和远程类（Ray Actor Class）的映射
+        self.mapping = {} # 角色Role和资源池id的映射。global_pool训练节点池，用于存放Actor和Critic；reward_pool专门用于运行奖励模型，避免干扰训练流程
 
     def add_actor_rollout_worker(self, config):
         """Add actor rollout worker based on the actor strategy."""
