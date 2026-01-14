@@ -227,17 +227,20 @@ class TaskRunner: # 分布式训练管理器，完成PPO的强化学习过程
             global_pool_id: [config.trainer.n_gpus_per_node] * config.trainer.nnodes,
         }
         # TODO Here you can use the new registration method to support dynamic registration of roles
-        if config.reward_model.enable_resource_pool:
+        # 如果为reward开启了独立资源池，则为奖励模型分配专门的 GPU 资源，以实现显存隔离
+        # 当reward规模较小，或者微调策略是lora的时候，可以不用为reward单独开辟资源池
+        if config.reward_model.enable_resource_pool: 
             if config.reward_model.n_gpus_per_node <= 0:
                 raise ValueError("config.reward_model.n_gpus_per_node must be greater than 0")
             if config.reward_model.nnodes <= 0:
                 raise ValueError("config.reward_model.nnodes must be greater than 0")
 
-            reward_pool = [config.reward_model.n_gpus_per_node] * config.reward_model.nnodes
+            reward_pool = [config.reward_model.n_gpus_per_node] * config.reward_model.nnodes # 为reward分配机器和GPU
             resource_pool_spec["reward_pool"] = reward_pool
 
         from verl.trainer.ppo.ray_trainer import ResourcePoolManager
 
+        # 注册资源池管理mgr
         resource_pool_manager = ResourcePoolManager(resource_pool_spec=resource_pool_spec, mapping=self.mapping)
         return resource_pool_manager
 
@@ -262,12 +265,12 @@ class TaskRunner: # 分布式训练管理器，完成PPO的强化学习过程
                 raise ValueError(f"Invalid use_legacy_worker_impl: {use_legacy_worker_impl}")
 
             self.role_worker_mapping[Role.RewardModel] = ray.remote(RewardModelWorker)
-            if config.reward_model.enable_resource_pool:
+            if config.reward_model.enable_resource_pool: # 决定是否单独为reward开辟资源池
                 self.mapping[Role.RewardModel] = "reward_pool"
             else:
                 self.mapping[Role.RewardModel] = "global_pool"
 
-    def add_ref_policy_worker(self, config, ref_policy_cls):
+    def add_ref_policy_worker(self, config, ref_policy_cls): # ref_policy_cls就是最初的Actor
         """Add reference policy worker if KL loss or KL reward is used."""
         from verl.trainer.ppo.ray_trainer import Role
 
@@ -277,15 +280,15 @@ class TaskRunner: # 分布式训练管理器，完成PPO的强化学习过程
         if use_legacy_worker_impl == "disable": # 如果使用engine，那么ref已经被融合在ActorRolloutRefWorker
             return
 
-        if need_reference_policy(config):
-            self.role_worker_mapping[Role.RefPolicy] = ray.remote(ref_policy_cls)
-            self.mapping[Role.RefPolicy] = "global_pool"
+        if need_reference_policy(config): # 如果需要ref
+            self.role_worker_mapping[Role.RefPolicy] = ray.remote(ref_policy_cls) # 把ref注册到ray
+            self.mapping[Role.RefPolicy] = "global_pool" # 把ref注册到资源池
 
 
 
 
 
-    def run(self, config): # 通过worker加载trainer并开始训练
+    def run(self, config):
         """Execute the main PPO training workflow.
 
         This method sets up the distributed training environment, initializes
@@ -318,7 +321,7 @@ class TaskRunner: # 分布式训练管理器，完成PPO的强化学习过程
         self.add_reward_model_worker(config)
 
         # Add a reference policy worker if KL loss or KL reward is used.
-        self.add_ref_policy_worker(config, actor_rollout_cls)
+        self.add_ref_policy_worker(config, actor_rollout_cls) # 传入最初的actor作为参考模型
 
         # validate config
         validate_config(
@@ -329,32 +332,32 @@ class TaskRunner: # 分布式训练管理器，完成PPO的强化学习过程
 
         # Download the checkpoint from HDFS to the local machine.
         # `use_shm` determines whether to use shared memory, which could lead to faster model loading if turned on
-        local_path = copy_to_local(
+        local_path = copy_to_local( # 将模型文件加载到本地
             config.actor_rollout_ref.model.path, use_shm=config.actor_rollout_ref.model.get("use_shm", False)
-        )
+        ) # use_shm=True，将模型文件加载到共享内存中，提高模型加载速度。但模型太大，可能会导致内存不足。
 
         # Instantiate the tokenizer and processor.
-        from verl.utils import hf_processor, hf_tokenizer
+        from verl.utils import hf_processor, hf_tokenizer   
 
-        trust_remote_code = config.data.get("trust_remote_code", False)
-        tokenizer = hf_tokenizer(local_path, trust_remote_code=trust_remote_code)
+        trust_remote_code = config.data.get("trust_remote_code", False) # huggingface允许远程的模型仓库包含自定义代码。出于安全考虑，不读取这些代码。
+        tokenizer = hf_tokenizer(local_path, trust_remote_code=trust_remote_code) # 分词器
         # Used for multimodal LLM, could be None
-        processor = hf_processor(local_path, trust_remote_code=trust_remote_code, use_fast=True)
+        processor = hf_processor(local_path, trust_remote_code=trust_remote_code, use_fast=True) # 多模态大模型中将各类模态转为张量格式
 
         # Load the reward manager for training and validation.
         reward_fn = load_reward_manager( # 如果要自定义奖励规则，在配置项中声明规则路径和函数名
-            config, tokenizer, num_examine=0, **config.reward_model.get("reward_kwargs", {})
+            config, tokenizer, num_examine=0, **config.reward_model.get("reward_kwargs", {})    
         )
         val_reward_fn = load_reward_manager(
             config, tokenizer, num_examine=1, **config.reward_model.get("reward_kwargs", {})
         )
-
-        resource_pool_manager = self.init_resource_pool_mgr(config)
+        
+        resource_pool_manager = self.init_resource_pool_mgr(config) # 初始化资源池管理器
 
         from verl.utils.dataset.rl_dataset import collate_fn
 
         # Create training and validation datasets.
-        train_dataset = create_rl_dataset(
+        train_dataset = create_rl_dataset( # 创建训练和验证数据集
             config.data.train_files,
             config.data,
             tokenizer,
@@ -370,10 +373,10 @@ class TaskRunner: # 分布式训练管理器，完成PPO的强化学习过程
             is_train=False,
             max_samples=config.data.get("val_max_samples", -1),
         )
-        train_sampler = create_rl_sampler(config.data, train_dataset)
+        train_sampler = create_rl_sampler(config.data, train_dataset) # 训练阶段数据采样器
 
         # Initialize the PPO trainer.
-        trainer = RayPPOTrainer(
+        trainer = RayPPOTrainer( # 把所有的worker,pool_mgr,dataset等注册到ray训练器
             config=config,
             tokenizer=tokenizer,
             processor=processor,
@@ -388,7 +391,7 @@ class TaskRunner: # 分布式训练管理器，完成PPO的强化学习过程
             train_sampler=train_sampler,
         )
         # Initialize the workers of the trainer.
-        trainer.init_workers()
+        trainer.init_workers() # 实例化worker并分配资源池
 
         # Start the training process.
         trainer.fit()
