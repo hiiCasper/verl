@@ -134,46 +134,52 @@ class TaskRunner: # 分布式训练管理器，完成PPO的强化学习过程
         # - RefPolicy: 参考策略，用于计算 KL 散度，防止模型在强化学习过程中产生严重的模式坍塌。
         # - RewardModel: 奖励模型，在非规则奖励场景下，负责为 Actor 生成的响应进行打分。
         # - ActorRolloutRef: 融合角色，在高性能模式下将 Actor、Rollout 和 RefPolicy 放在同一个进程中，以减少显存冗余和通信开销。
+
+
         self.role_worker_mapping = {} # 角色 Role 和远程类（Ray Actor Class）的映射
         self.mapping = {} # 角色Role和资源池id的映射。global_pool训练节点池，用于存放Actor和Critic；reward_pool专门用于运行奖励模型，避免干扰训练流程
 
     def add_actor_rollout_worker(self, config):
-        """Add actor rollout worker based on the actor strategy."""
+        """Add actor rollout worker based on the actor strategy.
+            把ActorRollout角色注册到ray当中，并返回它的远程类
+        """
         from verl.single_controller.ray import RayWorkerGroup
         from verl.trainer.ppo.ray_trainer import Role
 
         use_legacy_worker_impl = config.trainer.get("use_legacy_worker_impl", "auto")
 
         # use new model engine implementation
+        # 三大策略：engine新策略，legacy策略（fsdp和megatron）
         if use_legacy_worker_impl == "disable":
             from verl.workers.engine_workers import ActorRolloutRefWorker
 
             actor_rollout_cls = ActorRolloutRefWorker
             ray_worker_group_cls = RayWorkerGroup
 
-            lora_rank = config.actor_rollout_ref.model.get("lora", {}).get("rank", 0)
+            lora_rank = config.actor_rollout_ref.model.get("lora", {}).get("rank", 0) # LoRA的矩阵的秩
             if lora_rank <= 0:
                 lora_rank = config.actor_rollout_ref.model.get("lora_rank", 0)
-            ref_in_actor = lora_rank > 0 or config.actor_rollout_ref.model.get("lora_adapter_path") is not None
+            ref_in_actor = lora_rank > 0 or config.actor_rollout_ref.model.get("lora_adapter_path") is not None # 如果lora秩大于0或者指定了lora模型
             # NOTE: In new model engine, ref policy and actor rollout are in same ActorRolloutRefWorker,
             # while in legacy model engine, ref policy is in a separate ActorRolloutRefWorker.
-            if need_reference_policy(config) and not ref_in_actor:
-                role = Role.ActorRolloutRef
+            if need_reference_policy(config) and not ref_in_actor: 
+                role = Role.ActorRolloutRef # 如果不使用lora，就是全参数微调，此时需要一个完整的reference
             else:
-                role = Role.ActorRollout
-            self.role_worker_mapping[role] = ray.remote(actor_rollout_cls)
-            self.mapping[role] = "global_pool"
+                role = Role.ActorRollout # 如果要使用lora，就不需要单独的reference，原先的冻结底座就是reference，而lora矩阵就是actor。
+            self.role_worker_mapping[role] = ray.remote(actor_rollout_cls) # 添加ActorRollout角色和远程类的映射，并把actor_rollout_cls注册为ray的worker
+            self.mapping[role] = "global_pool" # 把ActorRollout放在global资源池里
             return actor_rollout_cls, ray_worker_group_cls
 
         # Note: sync mode validation is now handled in RolloutConfig.__post_init__
         # Always use async worker since sync mode is deprecated and rejected
-        if config.actor_rollout_ref.actor.strategy in {"fsdp", "fsdp2"}:
+        # 使用legacy策略：不推荐
+        if config.actor_rollout_ref.actor.strategy in {"fsdp", "fsdp2"}: # 使用fsdp分布式策略
             from verl.workers.fsdp_workers import AsyncActorRolloutRefWorker
 
             actor_rollout_cls = AsyncActorRolloutRefWorker
             ray_worker_group_cls = RayWorkerGroup
 
-        elif config.actor_rollout_ref.actor.strategy == "megatron":
+        elif config.actor_rollout_ref.actor.strategy == "megatron": # 使用megatron分布式策略
             from verl.workers.megatron_workers import AsyncActorRolloutRefWorker
 
             actor_rollout_cls = AsyncActorRolloutRefWorker
@@ -182,22 +188,22 @@ class TaskRunner: # 分布式训练管理器，完成PPO的强化学习过程
         else:
             raise NotImplementedError
 
-        self.role_worker_mapping[Role.ActorRollout] = ray.remote(actor_rollout_cls)
-        self.mapping[Role.ActorRollout] = "global_pool"
+        self.role_worker_mapping[Role.ActorRollout] = ray.remote(actor_rollout_cls) # 添加role-worker映射，并注册actor_rollout_cls为ray的worker
+        self.mapping[Role.ActorRollout] = "global_pool" # 添加role-pool映射
         return actor_rollout_cls, ray_worker_group_cls
 
     def add_critic_worker(self, config):
         """Add critic worker to role mapping."""
         use_legacy_worker_impl = config.trainer.get("use_legacy_worker_impl", "auto")
         if config.critic.strategy in {"fsdp", "fsdp2"}:
-            if use_legacy_worker_impl in ["auto", "enable"]:
+            if use_legacy_worker_impl in ["auto", "enable"]: # 使用旧策略
                 from verl.workers.fsdp_workers import CriticWorker
-            elif use_legacy_worker_impl == "disable":
+            elif use_legacy_worker_impl == "disable": # 使用engine(engine是基于fsdp实现的，所以配置项是否昂在fsdp之内)
                 # we don't need to specialize critic worker. Just use TrainingWorker
                 from verl.workers.engine_workers import TrainingWorker
 
                 CriticWorker = TrainingWorker
-                print("Using new worker implementation")
+                print("Using engine worker implementation")
             else:
                 raise ValueError(f"Invalid use_legacy_worker_impl: {use_legacy_worker_impl}")
 
@@ -210,14 +216,14 @@ class TaskRunner: # 分布式训练管理器，完成PPO的强化学习过程
 
         from verl.trainer.ppo.ray_trainer import Role
 
-        self.role_worker_mapping[Role.Critic] = ray.remote(CriticWorker)
+        self.role_worker_mapping[Role.Critic] = ray.remote(CriticWorker) # 注册CriticWorker到ray
         self.mapping[Role.Critic] = "global_pool"
 
     def init_resource_pool_mgr(self, config):
         """Initialize resource pool manager."""
 
         global_pool_id = "global_pool"
-        resource_pool_spec = {
+        resource_pool_spec = { # 让ResourcePoolManager创建一个global_pool资源池，分配nnodes个机器，每个机器n_gpus_per_node个GPU
             global_pool_id: [config.trainer.n_gpus_per_node] * config.trainer.nnodes,
         }
         # TODO Here you can use the new registration method to support dynamic registration of roles
@@ -268,7 +274,7 @@ class TaskRunner: # 分布式训练管理器，完成PPO的强化学习过程
         # Ref policy has been fused into ActorRolloutRefWorker in new model engine,
         # we don't need to add a separate ref policy worker group.
         use_legacy_worker_impl = config.trainer.get("use_legacy_worker_impl", "auto")
-        if use_legacy_worker_impl == "disable":
+        if use_legacy_worker_impl == "disable": # 如果使用engine，那么ref已经被融合在ActorRolloutRefWorker
             return
 
         if need_reference_policy(config):
@@ -279,7 +285,7 @@ class TaskRunner: # 分布式训练管理器，完成PPO的强化学习过程
 
 
 
-    def run(self, config): #################################通过worker加载trainer并开始训练
+    def run(self, config): # 通过worker加载trainer并开始训练
         """Execute the main PPO training workflow.
 
         This method sets up the distributed training environment, initializes
