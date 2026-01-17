@@ -219,30 +219,7 @@ class TaskRunner: # 分布式训练管理器，完成PPO的强化学习过程
         self.role_worker_mapping[Role.Critic] = ray.remote(CriticWorker) # 注册CriticWorker到ray
         self.mapping[Role.Critic] = "global_pool"
 
-    def init_resource_pool_mgr(self, config):
-        """Initialize resource pool manager."""
-
-        global_pool_id = "global_pool"
-        resource_pool_spec = { # 让ResourcePoolManager创建一个global_pool资源池，分配nnodes个机器，每个机器n_gpus_per_node个GPU
-            global_pool_id: [config.trainer.n_gpus_per_node] * config.trainer.nnodes,
-        }
-        # TODO Here you can use the new registration method to support dynamic registration of roles
-        # 如果为reward开启了独立资源池，则为奖励模型分配专门的 GPU 资源，以实现显存隔离
-        # 当reward规模较小，或者微调策略是lora的时候，可以不用为reward单独开辟资源池
-        if config.reward_model.enable_resource_pool: 
-            if config.reward_model.n_gpus_per_node <= 0:
-                raise ValueError("config.reward_model.n_gpus_per_node must be greater than 0")
-            if config.reward_model.nnodes <= 0:
-                raise ValueError("config.reward_model.nnodes must be greater than 0")
-
-            reward_pool = [config.reward_model.n_gpus_per_node] * config.reward_model.nnodes # 为reward分配机器和GPU
-            resource_pool_spec["reward_pool"] = reward_pool
-
-        from verl.trainer.ppo.ray_trainer import ResourcePoolManager
-
-        # 注册资源池管理mgr
-        resource_pool_manager = ResourcePoolManager(resource_pool_spec=resource_pool_spec, mapping=self.mapping)
-        return resource_pool_manager
+    
 
     def add_reward_model_worker(self, config):
         """Add reward model worker if enabled."""
@@ -284,8 +261,30 @@ class TaskRunner: # 分布式训练管理器，完成PPO的强化学习过程
             self.role_worker_mapping[Role.RefPolicy] = ray.remote(ref_policy_cls) # 把ref注册到ray
             self.mapping[Role.RefPolicy] = "global_pool" # 把ref注册到资源池
 
+    def init_resource_pool_mgr(self, config):
+            """Initialize resource pool manager."""
 
+            global_pool_id = "global_pool"
+            resource_pool_spec = { # 让ResourcePoolManager创建一个global_pool资源池，分配nnodes个机器，每个机器n_gpus_per_node个GPU
+                global_pool_id: [config.trainer.n_gpus_per_node] * config.trainer.nnodes,
+            }
+            # TODO Here you can use the new registration method to support dynamic registration of roles
+            # 如果为reward开启了独立资源池，则为奖励模型分配专门的 GPU 资源，以实现显存隔离
+            # 当reward规模较小，或者微调策略是lora的时候，可以不用为reward单独开辟资源池
+            if config.reward_model.enable_resource_pool: 
+                if config.reward_model.n_gpus_per_node <= 0:
+                    raise ValueError("config.reward_model.n_gpus_per_node must be greater than 0")
+                if config.reward_model.nnodes <= 0:
+                    raise ValueError("config.reward_model.nnodes must be greater than 0")
 
+                reward_pool = [config.reward_model.n_gpus_per_node] * config.reward_model.nnodes # 为reward分配机器和GPU
+                resource_pool_spec["reward_pool"] = reward_pool
+
+            from verl.trainer.ppo.ray_trainer import ResourcePoolManager
+
+            # 注册资源池管理mgr
+            resource_pool_manager = ResourcePoolManager(resource_pool_spec=resource_pool_spec, mapping=self.mapping)
+            return resource_pool_manager
 
 
     def run(self, config):
