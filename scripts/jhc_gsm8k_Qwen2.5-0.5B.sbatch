@@ -1,13 +1,7 @@
 #!/bin/bash
 
-#SBATCH --partition=a100x4
-#SBATCH --nodes=1
-#SBATCH --ntasks-per-node=1
-#SBATCH --time=06:00:00
-#SBATCH --gres=gpu:4
 #SBATCH --job-name=jhc_gsm8k_Qwen2.5-0.5B
 #SBATCH --output=output.out
-#SBATCH --cpus-per-task=10
 
 source /home/lfzhang/project/miniconda3/etc/profile.d/conda.sh
 
