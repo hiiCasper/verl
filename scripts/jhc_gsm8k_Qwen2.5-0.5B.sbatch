@@ -1,7 +1,6 @@
 #!/bin/bash
 
-#SBATCH --job-name=jhc_gsm8k_Qwen2.5-0.5B
-#SBATCH --output=output.out
+exec > >(tee -a output.out) 2>&1
 
 source /home/lfzhang/project/miniconda3/etc/profile.d/conda.sh
 
