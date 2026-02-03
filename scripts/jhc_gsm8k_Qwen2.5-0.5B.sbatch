@@ -1,0 +1,55 @@
+#!/bin/bash
+
+#SBATCH --partition=gpu
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --time=06:00:00
+#SBATCH --gres=gpu:4
+#SBATCH --job-name=jhc_gsm8k_Qwen2.5-0.5B
+#SBATCH --output=output.out
+#SBATCH --cpus-per-task=20
+
+source /home/lfzhang/project/miniconda3/etc/profile.d/conda.sh
+
+conda activate verl
+
+cd $SLURM_SUBMIT_DIR
+
+export HF_ENDPOINT=https://hf-mirror.com
+
+unset ROCR_VISIBLE_DEVICES
+
+PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo \
+ actor_rollout_ref.rollout.dtype=half \
+ actor_rollout_ref.rollout.enforce_eager=True\
+ actor_rollout_ref.actor.fsdp_config.use_torch_compile=False \
+ actor_rollout_ref.ref.fsdp_config.use_torch_compile=False \
+ critic.model.fsdp_config.use_torch_compile=False \
+ data.train_files=../examples/data/gsm8k/train.parquet \
+ data.val_files=../examples/data/gsm8k/test.parquet \
+ data.train_batch_size=256 \
+ data.max_prompt_length=512 \
+ data.max_response_length=512 \
+ actor_rollout_ref.model.path=/home/lfzhang/project/huggingface/hub/models--Qwen--Qwen2.5-0.5B-Instruct/snapshots/7ae557604adf67be50417f59c2c2f167def9a775 \
+ actor_rollout_ref.actor.optim.lr=1e-6 \
+ actor_rollout_ref.actor.ppo_mini_batch_size=64 \
+ actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
+ actor_rollout_ref.rollout.name=vllm \
+ actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=8 \
+ actor_rollout_ref.rollout.tensor_model_parallel_size=2 \
+ actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
+ +actor_rollout_ref.rollout.engine_kwargs.vllm.disable_flash_attn=True \
+ actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=4 \
+ critic.optim.lr=1e-5 \
+ critic.model.path=/home/lfzhang/project/huggingface/hub/models--Qwen--Qwen2.5-0.5B-Instruct/snapshots/7ae557604adf67be50417f59c2c2f167def9a775 \
+ critic.ppo_micro_batch_size_per_gpu=4 \
+ algorithm.kl_ctrl.kl_coef=0.001 \
+ trainer.logger=console \
+ trainer.val_before_train=False \
+ trainer.n_gpus_per_node=4 \
+ trainer.nnodes=1 \
+ trainer.save_freq=10 \
+ trainer.test_freq=10 \
+ trainer.total_epochs=15 2>&1 | tee verl_demo.log
+
+conda deactivate
