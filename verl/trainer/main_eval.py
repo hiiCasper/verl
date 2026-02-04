@@ -42,7 +42,7 @@ def process_item(config, data_source, response_lst, reward_data):
 def main(config):
     local_path = copy_to_local(config.data.path, use_shm=config.data.get("use_shm", False))
     dataset = pd.read_parquet(local_path)
-    responses = dataset[config.data.response_key]
+    responses = dataset[config.data.response_key].apply(lambda x:[x])
     data_sources = dataset[config.data.data_source_key]
     reward_model_data = dataset[config.data.reward_model_key]
 

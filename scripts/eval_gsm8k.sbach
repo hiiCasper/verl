@@ -1,0 +1,22 @@
+#!/bin/bash
+
+exec > >(tee output.out) 2>&1
+
+source /home/lfzhang/project/miniconda3/etc/profile.d/conda.sh
+
+conda activate verl
+
+cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")}"
+
+export HF_ENDPOINT=https://hf-mirror.com
+
+unset ROCR_VISIBLE_DEVICES
+
+PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_eval \
+ data.path=../examples/data_preprocess/data/gsm8k/test.parquet \
+ custom_reward_function.path=../verl/utils/reward_score/gsm8k.py \
+ data.prompt_key=question \
+ data.response_key=answer \
+ data.data_source_key=openai/gsm8k
+
+conda deactivate
