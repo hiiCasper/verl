@@ -13,6 +13,7 @@ export HF_ENDPOINT=https://hf-mirror.com
 unset ROCR_VISIBLE_DEVICES
 
 PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo \
+ trainer.default_local_dir=/home/lfzhang/scratch/cp/qwen2.5_gsm8k \
  data.train_files=../examples/data_preprocess/data/gsm8k/train.parquet \
  data.val_files=../examples/data_preprocess/data/gsm8k/test.parquet \
  data.train_batch_size=256 \
@@ -24,7 +25,7 @@ PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo \
  actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
  actor_rollout_ref.rollout.name=vllm \
  actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=8 \
- actor_rollout_ref.rollout.tensor_model_parallel_size=4 \
+ actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
  actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
  actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=4 \
  critic.optim.lr=1e-5 \
