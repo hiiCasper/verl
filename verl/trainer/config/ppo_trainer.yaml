@@ -193,7 +193,7 @@ trainer:
   del_local_ckpt_after_load: False
 
   # Default local directory for saving checkpoints
-  default_local_dir: checkpoints/${trainer.project_name}/${trainer.experiment_name}
+  default_local_dir: ~/scratch/cp/qwen2.5_gsm8k
 
   # Maximum number of actor checkpoints to keep
   max_actor_ckpt_to_keep: null
