@@ -1,23 +1,18 @@
 #!/bin/bash
 
-exec > >(tee -a output.out) 2>&1
+exec > >(tee output.out) 2>&1
 
 source /home/lfzhang/project/miniconda3/etc/profile.d/conda.sh
 
 conda activate verl
 
-cd $SLURM_SUBMIT_DIR
+cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")}"
 
 export HF_ENDPOINT=https://hf-mirror.com
 
 unset ROCR_VISIBLE_DEVICES
 
 PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo \
- actor_rollout_ref.rollout.dtype=half \
- actor_rollout_ref.rollout.enforce_eager=True\
- actor_rollout_ref.actor.fsdp_config.use_torch_compile=False \
- actor_rollout_ref.ref.fsdp_config.use_torch_compile=False \
- critic.model.fsdp_config.use_torch_compile=False \
  data.train_files=../examples/data_preprocess/data/gsm8k/train.parquet \
  data.val_files=../examples/data_preprocess/data/gsm8k/test.parquet \
  data.train_batch_size=256 \
@@ -31,7 +26,6 @@ PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo \
  actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=8 \
  actor_rollout_ref.rollout.tensor_model_parallel_size=2 \
  actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
- +actor_rollout_ref.rollout.engine_kwargs.vllm.disable_flash_attn=True \
  actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=4 \
  critic.optim.lr=1e-5 \
  critic.model.path=/home/lfzhang/project/huggingface/hub/models--Qwen--Qwen2.5-0.5B-Instruct/snapshots/7ae557604adf67be50417f59c2c2f167def9a775 \
